@@ -1,3 +1,4 @@
+#include <stdio.h>
 enum state {
     BOOT, ARMED, DRILLING, FAULT, SHUTDOWN
 };

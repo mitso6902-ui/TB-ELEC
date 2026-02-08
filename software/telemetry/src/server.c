@@ -1,68 +1,98 @@
+#define _WIN32_WINNT 0x0601   // Windows 7+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 
-#define PORT 8080
+#include <winsock2.h>
+#include <ws2tcpip.h>
 
-int main() {
-    int server_fd, new_socket, valread;
-    struct sockaddr_in address;
+#pragma comment(lib, "ws2_32.lib")
+
+#define PORT 5000
+#define BUFFER_SIZE 1024
+
+int main(void) {
+    WSADATA wsa;
+    SOCKET server_fd, client_fd;
+    struct sockaddr_in server_addr, client_addr;
+    int client_len = sizeof(client_addr);
+    char buffer[BUFFER_SIZE];
+
+    /* Initialize Winsock */
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        printf("WSAStartup failed\n");
+        return 1;
+    }
+
+    /* Create socket */
+    server_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (server_fd == INVALID_SOCKET) {
+        printf("socket failed\n");
+        WSACleanup();
+        return 1;
+    }
+
+    /* Allow reuse of address */
     int opt = 1;
-    int addrlen = sizeof(address);
-    char buffer[1024] = {0};
-    char *hello = "Hello from server";
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR,
+               (const char *)&opt, sizeof(opt));
 
-    // 1. Create socket file descriptor
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-        perror("socket failed");
-        exit(EXIT_FAILURE);
+    /* Configure server address */
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(PORT);
+
+    /* Bind */
+    if (bind(server_fd,
+             (struct sockaddr *)&server_addr,
+             sizeof(server_addr)) == SOCKET_ERROR) {
+        printf("bind failed\n");
+        closesocket(server_fd);
+        WSACleanup();
+        return 1;
     }
 
-    // Optional: Forcefully attach socket to the port 8080, useful for
-    // avoiding "Address already in use" errors on frequent restarts.
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
-        perror("setsockopt failed");
-        exit(EXIT_FAILURE);
+    /* Listen */
+    if (listen(server_fd, 5) == SOCKET_ERROR) {
+        printf("listen failed\n");
+        closesocket(server_fd);
+        WSACleanup();
+        return 1;
     }
 
-    // 2. Bind the socket to port 8080 and any network interface
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY; // Listen on all available interfaces
-    address.sin_port = htons(PORT);       // Convert port to network byte order
+    printf("Server listening on port %d...\n", PORT);
 
-    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) == -1) {
-        perror("bind failed");
-        exit(EXIT_FAILURE);
+    /* Accept connection */
+    client_fd = accept(server_fd,
+                       (struct sockaddr *)&client_addr,
+                       &client_len);
+    if (client_fd == INVALID_SOCKET) {
+        printf("accept failed\n");
+        closesocket(server_fd);
+        WSACleanup();
+        return 1;
     }
 
-    // 3. Listen for incoming connections
-    if (listen(server_fd, 3) == -1) { // Max 3 pending connections in queue
-        perror("listen failed");
-        exit(EXIT_FAILURE);
+    printf("Client connected: %s\n",
+           inet_ntoa(client_addr.sin_addr));
+
+    /* Receive data */
+    int bytes = recv(client_fd, buffer, BUFFER_SIZE - 1, 0);
+    if (bytes > 0) {
+        buffer[bytes] = '\0';
+        printf("Received: %s\n", buffer);
+
+        /* Send response */
+        const char *reply = "Hello from server\n";
+        send(client_fd, reply, (int)strlen(reply), 0);
     }
 
-    // 4. Accept a client connection (this is a blocking call)
-    printf("Server listening on port %d\n", PORT);
-    if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) == -1) {
-        perror("accept failed");
-        exit(EXIT_FAILURE);
-    }
-    printf("Connection accepted\n");
-
-    // 5. Read data from client and send a response
-    valread = read(new_socket, buffer, 1024);
-    printf("Client message: %s\n", buffer);
-    send(new_socket, hello, strlen(hello), 0);
-    printf("Hello message sent\n");
-
-    // 6. Close the connection and listening socket
-    close(new_socket);
-    close(server_fd); // In a real server, you'd keep this open in a loop
+    /* Cleanup */
+    closesocket(client_fd);
+    closesocket(server_fd);
+    WSACleanup();
 
     return 0;
 }
